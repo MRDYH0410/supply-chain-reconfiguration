@@ -1,0 +1,34 @@
+rl/
+  README.md
+
+  __init__.py
+
+  env/
+    __init__.py
+    sc_reconfig_env.py      # 环境：state/step/reward，调用 problem(LP+cost)
+    masks.py                # 两阶段动作集 + Strategy B/C 可行域 mask
+    dynamics.py             # a_M1/a_M2/age 的状态转移（含激活滞后、撤出）
+    rollout.py              # rollout 一条 episode（训练/评估复用）
+
+  policies/
+    __init__.py
+    networks.py             # Actor-Critic 网络，输出 u 和 v 的 logits + value
+    distributions.py        # masked binary action 采样与 logprob
+    baselines.py            # Strategy A baseline、启用一次的 baseline 等
+
+  algorithms/
+    __init__.py
+    buffers.py              # GAE + batch 打包
+    ppo.py                  # PPO(clip) trainer（训练 Strategy B 和 C）
+
+  experiments/
+    __init__.py
+    config.py               # 训练配置
+    train.py                # 训练入口（指定 Strategy B 或 C）
+    evaluate.py             # baseline 评估入口（A/B/C 分开）
+
+  utils/
+    __init__.py
+    seeding.py              # 全局随机种子
+    logging.py              # CSV logger
+    metrics.py              # episode 汇总指标
