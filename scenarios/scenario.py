@@ -47,6 +47,7 @@ class MarketParams:
     eta: float  # demand sensitivity to tariff pressure
     cu: float  # unit cost of demand loss (used when potential > realised)
     price: float  # uniform selling price p_k for this market
+    demand_floor: float = 0.0  # minimum fraction of d0 that remains even under high tariff pressure
 
 
 @dataclass(frozen=True)
@@ -228,7 +229,9 @@ class SupplyChainScenario:
         out: Dict[str, float] = {}
         for k, mk in self.markets.items():
             d0 = at(mk.d0, t)
-            out[k] = d0 * math.exp(-mk.eta * bar_tau[k])
+            floor = float(getattr(mk, "demand_floor", 0.0))
+            floor = max(0.0, min(0.99, floor))  # safety clamp
+            out[k] = d0 * (floor + (1.0 - floor) * math.exp(-mk.eta * bar_tau[k]))
         return out
 
     def realised_demand(

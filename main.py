@@ -1,6 +1,11 @@
 from pathlib import Path
 from typing import List, Dict
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 from scenarios.story_case import build_story_case
 
 from rl.env.sc_reconfig_env import SCReconfigEnv, Strategy
@@ -18,12 +23,19 @@ except Exception:
 
 
 # =========================
-# 你只需要改这里的参数
+# 你只需要改这里
 # =========================
 SEED = 0
 
-BASELINE_EPISODES = 10
+# 永远保留 Strategy A 运行（LP-only 对照组）
+RUN_STRATEGY_A = True
+STRATEGY_A_EPISODES = 20
 
+# Baseline（activate once）只作为可选 debug 对照，默认关闭
+RUN_BASELINES_BC = False
+BASELINE_EPISODES_BC = 10
+
+# 训练配置
 TRAIN_DEVICE = "cpu"
 HIDDEN = 64
 
@@ -33,6 +45,7 @@ TRAIN_EPISODES_PER_ITER_B = 10
 TRAIN_ITERATIONS_C = 20
 TRAIN_EPISODES_PER_ITER_C = 10
 
+# 训练后评估
 EVAL_TRAINED_EPISODES = 20
 
 CKPT_B = Path("checkpoints/policy_B.pt")
@@ -60,38 +73,58 @@ def _avg_episode_summaries(summaries: List[EpisodeSummary]) -> Dict[str, float]:
     return out
 
 
-def run_baselines(n_episodes: int, seed: int) -> None:
+def eval_strategy_a_lp_only(n_episodes: int, seed: int) -> Dict[str, float]:
+    """Strategy A is not trained. This is the LP-only benchmark run."""
     scenario = build_story_case()
-
     envA = SCReconfigEnv(scenario=scenario, strategy=Strategy.A, seed=seed)
     polA = NoReconfigPolicy()
 
+    sums = []
+    for e in range(n_episodes):
+        traj = rollout_episode(envA, polA, episode_seed=seed * 10000 + e)
+        sums.append(summarize_episode([tr.info for tr in traj]))
+
+    avg = _avg_episode_summaries(sums)
+
+    print("=== Strategy A  No reconfiguration (LP-only benchmark) ===")
+    print(f"  avg_total_cost   {avg['avg_total_cost']:.3f}")
+    print(f"  avg_total_reward {avg['avg_total_reward']:.3f}")
+    print(
+        f"  avg_C_in {avg.get('avg_C_in',0):.3f}  avg_C_out {avg.get('avg_C_out',0):.3f}  "
+        f"avg_C_fix {avg.get('avg_C_fix',0):.3f}  avg_C_qual {avg.get('avg_C_qual',0):.3f}  "
+        f"avg_C_loss {avg.get('avg_C_loss',0):.3f}  avg_Salvage {avg.get('avg_Salvage',0):.3f}"
+    )
+    print("")
+    return avg
+
+
+def eval_optional_baselines_bc(n_episodes: int, seed: int) -> None:
+    """Optional debug baselines for B/C. Not needed for normal runs."""
+    scenario = build_story_case()
+
     envB = SCReconfigEnv(scenario=scenario, strategy=Strategy.B, seed=seed)
-    polB = ActivateAtFirstChancePolicy()
-
     envC = SCReconfigEnv(scenario=scenario, strategy=Strategy.C, seed=seed)
-    polC = ActivateAtFirstChancePolicy()
 
-    def run(env, pol, name: str) -> None:
+    def run(env, name: str) -> None:
         sums = []
         for e in range(n_episodes):
+            # IMPORTANT: create a fresh policy each episode to avoid cross-episode state carryover
+            pol = ActivateAtFirstChancePolicy()
             traj = rollout_episode(env, pol, episode_seed=seed * 10000 + e)
             sums.append(summarize_episode([tr.info for tr in traj]))
         avg = _avg_episode_summaries(sums)
 
-        print(f"{name}")
-        print(f"  avg_total_cost  {avg['avg_total_cost']:.3f}")
-        print(f"  avg_total_reward {avg['avg_total_reward']:.3f}")
+        print(name)
+        print(f"  avg_total_cost   {avg['avg_total_cost']:.3f}")
         print(
             f"  avg_C_in {avg.get('avg_C_in',0):.3f}  avg_C_out {avg.get('avg_C_out',0):.3f}  "
             f"avg_C_fix {avg.get('avg_C_fix',0):.3f}  avg_C_qual {avg.get('avg_C_qual',0):.3f}  "
             f"avg_C_loss {avg.get('avg_C_loss',0):.3f}  avg_Salvage {avg.get('avg_Salvage',0):.3f}"
         )
 
-    print("=== Baseline evaluation (no training) ===")
-    run(envA, polA, "Strategy A  No reconfiguration")
-    run(envB, polB, "Strategy B  Partial reconfiguration (activate once baseline)")
-    run(envC, polC, "Strategy C  Full reconfiguration (activate once baseline)")
+    print("=== Optional baselines for B/C (debug only) ===")
+    run(envB, "Strategy B  activate once baseline")
+    run(envC, "Strategy C  activate once baseline")
     print("")
 
 
@@ -151,10 +184,10 @@ def train_strategy(strategy: str, seed: int, iterations: int, episodes_per_iter:
     print(f"saved model to {save}\n")
 
 
-def eval_trained(strategy: str, seed: int, n_episodes: int, device: str, load: Path) -> None:
+def eval_trained(strategy: str, seed: int, n_episodes: int, device: str, load: Path) -> Dict[str, float]:
     if torch is None:
         print("torch not available -> skip trained evaluation")
-        return
+        return {}
 
     scenario = build_story_case()
 
@@ -179,7 +212,7 @@ def eval_trained(strategy: str, seed: int, n_episodes: int, device: str, load: P
     avg = _avg_episode_summaries(sums)
 
     print(f"=== Trained policy evaluation Strategy {strategy.upper()} ===")
-    print(f"  avg_total_cost  {avg['avg_total_cost']:.3f}")
+    print(f"  avg_total_cost   {avg['avg_total_cost']:.3f}")
     print(f"  avg_total_reward {avg['avg_total_reward']:.3f}")
     print(
         f"  avg_C_in {avg.get('avg_C_in',0):.3f}  avg_C_out {avg.get('avg_C_out',0):.3f}  "
@@ -187,16 +220,23 @@ def eval_trained(strategy: str, seed: int, n_episodes: int, device: str, load: P
         f"avg_C_loss {avg.get('avg_C_loss',0):.3f}  avg_Salvage {avg.get('avg_Salvage',0):.3f}"
     )
     print("")
+    return avg
 
 
 def main() -> None:
     # 1) scenario self-check
-    validate_scenario()
+    # validate_scenario()
 
-    # 2) run three strategies baseline (no training)
-    run_baselines(n_episodes=BASELINE_EPISODES, seed=SEED)
+    # 2) always keep Strategy A (LP-only benchmark)
+    avgA = {}
+    if RUN_STRATEGY_A:
+        avgA = eval_strategy_a_lp_only(n_episodes=STRATEGY_A_EPISODES, seed=SEED)
 
-    # 3) train Strategy B and C separately
+    # 3) optional baselines for B/C (debug only)
+    if RUN_BASELINES_BC:
+        eval_optional_baselines_bc(n_episodes=BASELINE_EPISODES_BC, seed=SEED)
+
+    # 4) train Strategy B and C separately
     train_strategy(
         strategy="B",
         seed=SEED,
@@ -216,9 +256,15 @@ def main() -> None:
         save=CKPT_C,
     )
 
-    # 4) evaluate trained policies
-    eval_trained(strategy="B", seed=SEED, n_episodes=EVAL_TRAINED_EPISODES, device=TRAIN_DEVICE, load=CKPT_B)
-    eval_trained(strategy="C", seed=SEED, n_episodes=EVAL_TRAINED_EPISODES, device=TRAIN_DEVICE, load=CKPT_C)
+    # 5) evaluate trained policies
+    avgB = eval_trained(strategy="B", seed=SEED, n_episodes=EVAL_TRAINED_EPISODES, device=TRAIN_DEVICE, load=CKPT_B)
+    avgC = eval_trained(strategy="C", seed=SEED, n_episodes=EVAL_TRAINED_EPISODES, device=TRAIN_DEVICE, load=CKPT_C)
+
+    # optional: compare against Strategy A
+    if avgA and avgB:
+        print(f"Delta (B - A) avg_total_cost = {avgB['avg_total_cost'] - avgA['avg_total_cost']:.3f}")
+    if avgA and avgC:
+        print(f"Delta (C - A) avg_total_cost = {avgC['avg_total_cost'] - avgA['avg_total_cost']:.3f}")
 
 
 if __name__ == "__main__":

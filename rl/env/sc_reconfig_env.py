@@ -13,11 +13,17 @@ from problem.costs import compute_period_cost
 from .dynamics import StructuralState, next_structural_state
 from .masks import compute_action_mask, ActionMask
 
+from problem.triggers import (
+    TriggerConfig,
+    trigger_score_strategy_b,
+    trigger_score_strategy_c,
+)
+
 
 class Strategy(str, Enum):
-    A = "A"  # No relocation
-    B = "B"  # Partial relocation
-    C = "C"  # Full relocation
+    A = "A"
+    B = "B"
+    C = "C"
 
 
 @dataclass
@@ -29,37 +35,29 @@ class StepOutput:
 
 
 class SCReconfigEnv:
-    """Environment for structural reconfiguration RL with embedded operational LP.
-
-    This environment is designed to match Chapter 3 and 4 logic
-    - state includes regime xi_t and structural state (a_M1, a_M2, age)
-    - action is (u_t, v_t) with strategy specific masks
-    - operational decisions are obtained by solving the LP each period
-    - reward is negative total cost assembled from operational + structural components
-
-    Strategy separation
-    - Strategy A is evaluated with fixed actions (u=0, v=0) and no policy training
-    - Strategy B trains policy on activation u in Phase I only
-    - Strategy C trains policy on activation u in Phase I and withdrawal v in Phase II with feasibility mask
-    """
-
     def __init__(
         self,
         scenario: SupplyChainScenario,
         strategy: Strategy,
         seed: int = 0,
         episode_seed: Optional[int] = None,
+        activation_mode: str = "rl",
+        trigger_cfg: Optional[TriggerConfig] = None,
     ):
         self.scenario = scenario
         self.strategy = Strategy(strategy)
         self.base_seed = int(seed)
         self.episode_seed = episode_seed
 
+        self.activation_mode = str(activation_mode).lower()
+        if self.activation_mode not in ("rl", "trigger"):
+            raise ValueError("activation_mode must be 'rl' or 'trigger'")
+        self.trigger_cfg = trigger_cfg if trigger_cfg is not None else TriggerConfig(gamma=scenario.gamma)
+
         self._rng = np.random.default_rng(self.base_seed)
         self._regime_path: List[int] = []
         self._state: Optional[StructuralState] = None
 
-    # ---------- observation encoding ----------
     def _encode_obs(self, state: StructuralState) -> np.ndarray:
         regimes = self.scenario.regimes
         xi_onehot = np.zeros(len(regimes), dtype=np.float32)
@@ -73,7 +71,6 @@ class SCReconfigEnv:
         age_norm = float(state.age) / max(1.0, float(self.scenario.H))
         t_norm = float(state.t) / max(1.0, float(self.scenario.H))
 
-        # feature vector
         return np.concatenate(
             [xi_onehot, np.array([a_m1, a_m2, age_norm, t_norm], dtype=np.float32)],
             axis=0,
@@ -82,7 +79,6 @@ class SCReconfigEnv:
     def obs_dim(self) -> int:
         return len(self.scenario.regimes) + 4
 
-    # ---------- reset and step ----------
     def reset(self, episode_seed: Optional[int] = None) -> np.ndarray:
         if episode_seed is None:
             episode_seed = self.episode_seed
@@ -107,7 +103,7 @@ class SCReconfigEnv:
     def get_action_mask(self) -> ActionMask:
         assert self._state is not None
         if self.strategy == Strategy.A:
-            return ActionMask(u_mask=(1, 0), v_mask=(1, 0))  # fixed u=0,v=0
+            return ActionMask(u_mask=(1, 0), v_mask=(1, 0))
         if self.strategy == Strategy.B:
             return compute_action_mask(
                 scenario=self.scenario,
@@ -128,18 +124,58 @@ class SCReconfigEnv:
 
     def step(self, action: Tuple[int, int]) -> StepOutput:
         assert self._state is not None
+
+        # --- snapshot PRE-action structural state (for per-period timeline prints) ---
+        t = self._state.t
+        xi_t = self._state.xi_t
+        u_prev = int(self._state.u_prev)
+        a_pre = dict(self._state.a)
+        age_pre = int(self._state.age)
+
         u_t, v_t = int(action[0]), int(action[1])
 
-        # enforce strategy A and B rules defensively
         if self.strategy == Strategy.A:
             u_t, v_t = 0, 0
         if self.strategy == Strategy.B:
             v_t = 0
 
-        t = self._state.t
-        xi_t = self._state.xi_t
+        M2 = self.scenario.candidate_plant_id
 
-        # 1 solve operational LP under current structure
+        trigger_info = None
+        if self.activation_mode == "trigger" and int(self._state.a.get(M2, 0)) == 0:
+            cfg = self.trigger_cfg
+            if self.strategy == Strategy.B:
+                res = trigger_score_strategy_b(
+                    scenario=self.scenario,
+                    t=t,
+                    xi_t=xi_t,
+                    a=self._state.a,
+                    age=self._state.age,
+                    u_prev=self._state.u_prev,
+                    cfg=cfg,
+                )
+            elif self.strategy == Strategy.C:
+                res = trigger_score_strategy_c(
+                    scenario=self.scenario,
+                    t=t,
+                    xi_t=xi_t,
+                    a=self._state.a,
+                    age=self._state.age,
+                    u_prev=self._state.u_prev,
+                    cfg=cfg,
+                )
+            else:
+                res = None
+
+            if res is not None:
+                u_t = 1 if res.psi >= 0 else 0
+                trigger_info = {
+                    "J_NR": float(res.J_NR),
+                    "J_ALT": float(res.J_ALT),
+                    "psi": float(res.psi),
+                    "best_theta": res.best_theta,
+                }
+
         op = solve_operational_lp(
             scenario=self.scenario,
             t=t,
@@ -148,7 +184,6 @@ class SCReconfigEnv:
             age=self._state.age,
         )
 
-        # 2 assemble total cost and reward
         cb = compute_period_cost(
             scenario=self.scenario,
             t=t,
@@ -161,10 +196,9 @@ class SCReconfigEnv:
         )
         reward = float(cb.reward)
 
-        # 3 transition regime and structural state
         done = (t >= self.scenario.H)
         if not done:
-            xi_next = int(self._regime_path[t])  # path is 0-indexed, t is 1-indexed
+            xi_next = int(self._regime_path[t])
             self._state = next_structural_state(
                 scenario=self.scenario,
                 state=self._state,
@@ -176,16 +210,38 @@ class SCReconfigEnv:
         else:
             obs_next = self._encode_obs(self._state)
 
+        # --- snapshot POST-transition structural state ---
+        a_post = dict(self._state.a)
+        age_post = int(self._state.age)
+
         info = {
             "t": t,
             "xi_t": xi_t,
+            "u_prev": u_prev,
             "u_t": u_t,
             "v_t": v_t,
+
+            # PRE and POST structural snapshots (clean timeline interpretation)
+            "a_M1_pre": int(a_pre.get(self.scenario.legacy_plant_id, 0)),
+            "a_M2_pre": int(a_pre.get(self.scenario.candidate_plant_id, 0)),
+            "age_M2_pre": age_pre,
+            "rho_M2_pre": float(self.scenario.ramp_factor(self.scenario.candidate_plant_id, age_pre)),
+            "a_M1_post": int(a_post.get(self.scenario.legacy_plant_id, 0)),
+            "a_M2_post": int(a_post.get(self.scenario.candidate_plant_id, 0)),
+            "age_M2_post": age_post,
+            "rho_M2_post": float(self.scenario.ramp_factor(self.scenario.candidate_plant_id, age_post)),
+
+            # Backward-compatible aliases (used by older metrics code)
+            "a_M2": int(a_pre.get(self.scenario.candidate_plant_id, 0)),
+            "age_M2": age_pre,
+            "rho_M2": float(self.scenario.ramp_factor(self.scenario.candidate_plant_id, age_pre)),
+
             "lp_status": op.status,
             "lp_message": op.message,
             "cost_breakdown": cb.__dict__,
             "d": op.d,
             "L": op.L,
+            "trigger": trigger_info,
         }
 
         return StepOutput(obs=obs_next, reward=reward, done=done, info=info)
