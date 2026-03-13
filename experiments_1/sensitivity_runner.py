@@ -190,11 +190,45 @@ def _load_policy_from_checkpoint_if_available(
     if not path.exists():
         return None
 
-    ckpt = torch.load(path, map_location=device)
+    try:
+        ckpt = torch.load(path, map_location=device)
+    except Exception as e:
+        print(f"[checkpoint] failed to read {ckpt_path}: {e}")
+        return None
+
     hidden = int(ckpt.get("hidden", 64))
     env = SCReconfigEnv(scenario=scenario, strategy=strategy, seed=0)
-    policy = ActorCritic(obs_dim=env.obs_dim(), hidden=hidden)
-    policy.load_state_dict(ckpt["state_dict"])
+    current_obs_dim = int(env.obs_dim())
+
+    ckpt_obs_dim = ckpt.get("obs_dim", None)
+    if ckpt_obs_dim is not None:
+        try:
+            ckpt_obs_dim = int(ckpt_obs_dim)
+        except Exception:
+            ckpt_obs_dim = None
+
+    if ckpt_obs_dim is not None and ckpt_obs_dim != current_obs_dim:
+        print(
+            f"[checkpoint] skip incompatible checkpoint {ckpt_path}: "
+            f"checkpoint obs_dim={ckpt_obs_dim}, current obs_dim={current_obs_dim}"
+        )
+        return None
+
+    policy = ActorCritic(obs_dim=current_obs_dim, hidden=hidden)
+
+    try:
+        policy.load_state_dict(ckpt["state_dict"], strict=True)
+    except RuntimeError as e:
+        print(
+            f"[checkpoint] skip incompatible checkpoint {ckpt_path}: {e}"
+        )
+        return None
+    except Exception as e:
+        print(
+            f"[checkpoint] failed to load checkpoint {ckpt_path}: {e}"
+        )
+        return None
+
     policy.eval()
     return policy
 

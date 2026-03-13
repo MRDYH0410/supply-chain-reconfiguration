@@ -129,9 +129,15 @@ class SupplyChainScenario:
     pickup_routes: Optional[Dict[str, List[RouteParams]]] = None   # supplier -> plant tours, keyed by plant
     delivery_routes: Optional[Dict[str, List[RouteParams]]] = None  # plant -> market tours, keyed by plant
 
-    # ramp-up target used for scenario-level validation (story says roughly 3 periods to normal, i.e., age=4 near full)
+    # ramp-up target used for scenario-level validation under a quarterly time unit
     ramp_full_age: int = 4
     ramp_full_threshold: float = 0.90  # rho(ramp_full_age) should be >= this
+
+    # external quarter-level tariff-related demand shock
+    # Example:
+    # [0.711912, 0.854261, 1.000000, 0.805200]
+    # Interpreted cyclically as FQ1, FQ2, FQ3, FQ4, then repeating.
+    tariff_demand_shock_cycle: Optional[List[float]] = None
 
     def __post_init__(self):
         if self.initial_a is None:
@@ -146,6 +152,18 @@ class SupplyChainScenario:
             self.pickup_routes = {}
         if self.delivery_routes is None:
             self.delivery_routes = {}
+
+        if self.tariff_demand_shock_cycle is None:
+            self.tariff_demand_shock_cycle = [1.0, 1.0, 1.0, 1.0]
+        else:
+            if len(self.tariff_demand_shock_cycle) == 0:
+                raise ValueError("tariff_demand_shock_cycle must not be empty")
+            self.tariff_demand_shock_cycle = [float(x) for x in self.tariff_demand_shock_cycle]
+            for x in self.tariff_demand_shock_cycle:
+                if x <= 0.0:
+                    raise ValueError(
+                        f"tariff_demand_shock_cycle entries must be positive, got {x}"
+                    )
 
     # ---------- regime process ----------
     def sample_regime_path(self, seed: Optional[int] = None) -> List[int]:
@@ -209,6 +227,18 @@ class SupplyChainScenario:
             return float(sup.c_mat_base) + float(sup.delta_rel)
         return float(sup.c_mat_base)
 
+    # ---------- external tariff-related demand shock ----------
+    def get_tariff_demand_shock(self, t: int) -> float:
+        """Return external quarter-level tariff-related demand multiplier for period t.
+
+        The provided cycle is interpreted cyclically, so a 4-quarter sequence can be
+        reused over a longer horizon.
+        """
+        cycle = getattr(self, "tariff_demand_shock_cycle", None)
+        if not cycle:
+            return 1.0
+        return float(cycle[(t - 1) % len(cycle)])
+
     # ---------- demand construction (Chapter 3) ----------
     def tariff_pressure_index(self, xi_t: int, a_candidate: int) -> Dict[str, float]:
         """bar_tau_{k,t} as in Chapter 3."""
@@ -224,14 +254,29 @@ class SupplyChainScenario:
         return out
 
     def potential_demand(self, t: int, xi_t: int, a_candidate: int) -> Dict[str, float]:
-        """bar d_{k,t} = d0_{k,t} * exp(-eta_k * bar_tau_{k,t})."""
+        """bar d_{k,t} with tariff pressure effect and external tariff-related demand shock.
+
+        Base relation:
+            d_base = d0_{k,t} * [floor + (1-floor) * exp(-eta_k * bar_tau_{k,t})]
+
+        Calibrated extension:
+            d_potential = d_base * lambda_t
+
+        where lambda_t is the quarter-level multiplier estimated from the external
+        automotive time-series calibration.
+        """
         bar_tau = self.tariff_pressure_index(xi_t, a_candidate)
+        shock_multiplier = self.get_tariff_demand_shock(t)
+
         out: Dict[str, float] = {}
         for k, mk in self.markets.items():
             d0 = at(mk.d0, t)
             floor = float(getattr(mk, "demand_floor", 0.0))
             floor = max(0.0, min(0.99, floor))  # safety clamp
-            out[k] = d0 * (floor + (1.0 - floor) * math.exp(-mk.eta * bar_tau[k]))
+
+            d_base = d0 * (floor + (1.0 - floor) * math.exp(-mk.eta * bar_tau[k]))
+            out[k] = d_base * shock_multiplier
+
         return out
 
     def realised_demand(
@@ -413,8 +458,12 @@ class SupplyChainScenario:
             f"sum W_bar={W_total} must cover alpha*(D1+D2)={alpha_max*(d1_0+d2_0)}",
         )
 
-        # story (17) qualification window is first 3 periods after activation
-        add("qualification_window_is_three", self.reconfig.qual_ell == 3, f"qual_ell={self.reconfig.qual_ell} should be 3")
+        # story (17) qualification window should remain within a plausible quarterly range
+        add(
+            "qualification_window_reasonable",
+            2 <= self.reconfig.qual_ell <= 6,
+            f"qual_ell={self.reconfig.qual_ell} should lie in [2,6] quarters",
+        )
         add("qualification_cost_nonneg", self.reconfig.qual_G >= 0, f"qual_G={self.reconfig.qual_G} must be >=0")
 
         # story (14) salvage credit nonnegative
@@ -444,6 +493,13 @@ class SupplyChainScenario:
             if ok_multistop:
                 break
         add("route_multistop_exists", ok_multistop, "need at least one route with 2+ stops to represent tours")
+
+        ok_shock = all(x > 0.0 for x in self.tariff_demand_shock_cycle)
+        add(
+            "tariff_demand_shock_positive",
+            ok_shock,
+            f"tariff_demand_shock_cycle={self.tariff_demand_shock_cycle}",
+        )
 
         return checks
 

@@ -13,11 +13,13 @@ from typing import Dict, List, Sequence
 
 from experiments_2.sensitivity_plots import (
     LinePlotSpec,
+    PathContactSheetSpec,
     PathRampPoint,
     RampSummaryPoint,
     plot_all_tariff_path_lineplots,
     plot_path_phase2_cost_vs_kappa,
     plot_path_phase2_length_vs_kappa,
+    plot_path_total_cost_contact_sheet,
     plot_path_total_cost_vs_kappa,
     plot_ramp_cost_gaps,
     plot_ramp_phase2_cost,
@@ -210,6 +212,7 @@ def _write_path_outputs(raw_rows: List[dict], out_dir: str) -> None:
         grouped[str(row["path_id"])].append(row)
 
     summary_rows: List[dict] = []
+    contact_specs: List[PathContactSheetSpec] = []
 
     for path_id in sorted(grouped.keys()):
         rows = sorted(grouped[path_id], key=lambda r: float(r["ramp_kappa"]))
@@ -267,6 +270,15 @@ def _write_path_outputs(raw_rows: List[dict], out_dir: str) -> None:
             )
             for r in rows
         ]
+
+        contact_specs.append(
+            PathContactSheetSpec(
+                path_id=str(first["path_id"]),
+                path_label=str(first["path_label"]),
+                points=points,
+            )
+        )
+
         plot_path_total_cost_vs_kappa(
             points,
             out_png=os.path.join(path_dir, "fig_total_cost_vs_kappa.png"),
@@ -318,6 +330,12 @@ def _write_path_outputs(raw_rows: List[dict], out_dir: str) -> None:
         "best_count_A", "best_count_B", "best_count_C",
     ]
     _write_csv(summary_path, summary_rows, fieldnames)
+
+    plot_path_total_cost_contact_sheet(
+        contact_specs,
+        out_png=os.path.join(out_dir, "fig_total_cost_vs_kappa_contact_sheet.png"),
+        out_pdf=os.path.join(out_dir, "fig_total_cost_vs_kappa_contact_sheet.pdf"),
+    )
 
 
 def run_tariff_path_sensitivity(seeds: List[int], cfg: TrainEvalConfig) -> None:
@@ -481,7 +499,8 @@ def run_ramp_capability_sensitivity(
     ramp_kappas: List[float] | None = None,
 ) -> None:
     if ramp_kappas is None:
-        ramp_kappas = [0.35, 0.45, 0.55, 0.70, 0.90, 1.20]
+        # ramp_kappas = [0.35, 0.45, 0.55, 0.70, 0.90, 1.20]
+        ramp_kappas = [0.384, 0.461, 0.576, 0.768, 1.151]
     ramp_kappas = [float(x) for x in ramp_kappas]
 
     out_dir = os.path.join("outputs", "ramp_capability_sensitivity")
@@ -720,6 +739,7 @@ def run_ramp_capability_sensitivity(
     print(f"saved summary-by-kappa   -> {summary_csv}")
     print(f"saved summary-by-path    -> {os.path.join(out_dir, 'ramp_capability_summary_by_path.csv')}")
     print(f"saved by-path folders    -> {os.path.join(out_dir, 'by_path')}")
+    print(f"saved path contact sheet -> {os.path.join(out_dir, 'fig_total_cost_vs_kappa_contact_sheet.png')}")
     print(f"saved meta json          -> {meta_json}")
     print(f"saved overall figures    -> {out_dir}")
 
@@ -742,7 +762,9 @@ def main() -> None:
     run_ramp_capability_sensitivity(
         seeds=seeds,
         cfg=cfg,
-        ramp_kappas=[0.35, 0.45, 0.55, 0.70, 0.90, 1.20],
+        # ramp_kappas=[0.35, 0.45, 0.55, 0.70, 0.90, 1.20],
+        ramp_kappas=[0.384, 0.461, 0.576, 0.768, 1.151],
+
     )
 
 
