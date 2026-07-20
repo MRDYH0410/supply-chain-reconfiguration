@@ -1,0 +1,11 @@
+{
+  "selected_forecast_model": "gradient_boosting_lag_calendar",
+  "selected_curve_model": "exponential",
+  "curve_params": {
+    "eta": 0.13653203011845347
+  },
+  "interpretation": "demand_retention = f(tariff_decimal)",
+  "tariff_unit_note": "tariff_decimal uses 1.10 for 110%, 0.275 for 27.5%, etc.",
+  "counterfactual_logic": "2015-2024 monthly pseudo-demand used to forecast 2025 no-new-intervention path; 2025 actual/predicted capped at 1 defines raw retention samples.",
+  "t4_rate_percent_used": 154.0
+}

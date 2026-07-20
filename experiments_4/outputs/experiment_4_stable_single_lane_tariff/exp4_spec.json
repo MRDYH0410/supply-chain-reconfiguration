@@ -1,0 +1,45 @@
+{
+  "experiment": "experiment_4_stable_single_lane_tariff_sensitivity",
+  "changed_lane_only": "M1->D1",
+  "other_three_lanes": "Kept identical to Experiment 1 fixed baseline.",
+  "t1_tariff": 0.05,
+  "t2_tariff_grid": [
+    0.05,
+    0.1,
+    0.15,
+    0.2,
+    0.25,
+    0.3,
+    0.35,
+    0.4,
+    0.45,
+    0.5,
+    0.55,
+    0.6,
+    0.65,
+    0.7,
+    0.75,
+    0.8,
+    0.85,
+    0.9,
+    0.95,
+    1.0
+  ],
+  "t_ge_3_rule": {
+    "type": "stable_uniform_band",
+    "band": 0.1,
+    "floor": 0.01,
+    "interpretation": "tau_t is sampled uniformly from [max(1%, tau_{t-1}-10pp), tau_{t-1}+10pp]."
+  },
+  "path_seed_rule": "BASE_PATH_SEED + round(t2_tariff*1000), BASE_PATH_SEED=20260330",
+  "experiment_4_only_c_out_override": {
+    "M1": {
+      "D1": 1.0,
+      "D2": 6.0
+    },
+    "M2": {
+      "D1": 2.2,
+      "D2": 1.8
+    }
+  }
+}

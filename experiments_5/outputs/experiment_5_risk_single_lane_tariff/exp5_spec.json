@@ -1,0 +1,67 @@
+{
+  "experiment": "experiment_5_risk_single_lane_tariff_sensitivity",
+  "changed_lane_only": "M1->D1",
+  "other_three_lanes": "Kept identical to Experiment 1 fixed baseline.",
+  "t1_tariff": 0.05,
+  "t2_tariff_grid": [
+    0.05,
+    0.1,
+    0.15,
+    0.2,
+    0.25,
+    0.3,
+    0.35,
+    0.4,
+    0.45,
+    0.5,
+    0.55,
+    0.6,
+    0.65,
+    0.7,
+    0.75,
+    0.8,
+    0.85,
+    0.9,
+    0.95,
+    1.0
+  ],
+  "n_replications_per_t2": 1000,
+  "aggregation": "All reported costs, demands, timings, resets, and tariff paths are Monte Carlo means across replications.",
+  "t_ge_3_rule": {
+    "type": "risk_bucket_random_walk",
+    "floor": 0.01,
+    "buckets": [
+      {
+        "probability": 0.2,
+        "abs_change_low": 0.0,
+        "abs_change_high": 0.1
+      },
+      {
+        "probability": 0.3,
+        "abs_change_low": 0.1,
+        "abs_change_high": 0.2
+      },
+      {
+        "probability": 0.4,
+        "abs_change_low": 0.2,
+        "abs_change_high": 0.5
+      },
+      {
+        "probability": 0.08,
+        "abs_change_low": 0.5,
+        "abs_change_high": 1.0
+      },
+      {
+        "probability": 0.02,
+        "abs_change_low": 1.0,
+        "abs_change_high": 1.5
+      }
+    ],
+    "interpretation": "Each period draws one change-magnitude bucket, then applies a symmetric plus/minus shock in percentage-point terms."
+  },
+  "risk_control": {
+    "trigger": "If the previous 3 realised tariffs are all above 2.5",
+    "action": "Reset the next period tariff to the period-2 anchor, then continue the same transmission rule."
+  },
+  "path_seed_rule": "BASE_PATH_SEED + 100000*round(t2_tariff*1000) + replication_idx, BASE_PATH_SEED=20260331"
+}

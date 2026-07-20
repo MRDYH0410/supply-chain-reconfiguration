@@ -1,0 +1,16 @@
+{
+  "excel_path": "C:\\MRDYH\\paper\\digital asset\\supply-chain-reconfiguration\\paras\\more detailed.xlsx",
+  "output_dir": "C:\\MRDYH\\paper\\digital asset\\supply-chain-reconfiguration\\paras\\tariff_demand_curve_outputs",
+  "quarterly_obs_count": 41,
+  "monthly_obs_count": 123,
+  "training_window": "2015-10 to 2024-12",
+  "validation_window": "2024-01 to 2024-12",
+  "forecast_window": "2025-01 to 2025-12",
+  "best_forecast_model": "gradient_boosting_lag_calendar",
+  "best_curve_model": "exponential",
+  "curve_params": {
+    "eta": 0.13653203011845347
+  },
+  "t4_rate_percent_used": 154.0,
+  "raw_sample_rows": 12
+}

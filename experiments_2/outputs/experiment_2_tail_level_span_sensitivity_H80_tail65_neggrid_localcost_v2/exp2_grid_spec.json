@@ -1,0 +1,36 @@
+{
+  "tail_start_period": 16,
+  "level_shifts": [
+    -1.0,
+    -0.95,
+    -0.9,
+    -0.85,
+    -0.8,
+    -0.75,
+    -0.7,
+    -0.65,
+    -0.6,
+    -0.5,
+    -0.4,
+    -0.3,
+    -0.2,
+    -0.1,
+    0.0
+  ],
+  "span_levels": [
+    0.05,
+    0.1,
+    0.15,
+    0.2
+  ],
+  "interpretation": {
+    "level_shift": "Applied to the period-15 anchor of the M1->D1 tariff for periods 16-80.",
+    "span": "Deterministic within-tail oscillation range around the shifted baseline.",
+    "exp2_local_override": {
+      "M2_D1_c_out": 1.1,
+      "M2_ramp_kappa": 0.28,
+      "fixed_cost_multiplier": 0.68,
+      "qualification_cost_multiplier": 0.68
+    }
+  }
+}
